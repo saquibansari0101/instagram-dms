@@ -52,6 +52,9 @@ This application serves as a dedicated "DM-only" client for Instagram. It wraps 
     flutter run
     ```
 
+## Building for Release
+See [RELEASE.md](RELEASE.md) for detailed instructions on building and signing the app.
+
 ## Development
 
 -   **`lib/dm_web_view.dart`**: Contains the WebView logic, CSS injection scripts, and navigation delegates.
