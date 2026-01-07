@@ -10,6 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_inappwebview: ^6.1.5
+  flutter_local_notifications: ^19.5.0
   shared_preferences: ^2.5.4
 
 dev_dependencies:

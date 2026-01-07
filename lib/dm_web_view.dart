@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'settings_page.dart';
 
@@ -15,6 +16,8 @@ class DmWebView extends StatefulWidget {
 class _DmWebViewState extends State<DmWebView> {
   InAppWebViewController? webViewController;
   late final InAppWebViewSettings settings;
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+      FlutterLocalNotificationsPlugin();
 
   // Settings State
   bool _hideHome = true;
@@ -29,7 +32,57 @@ class _DmWebViewState extends State<DmWebView> {
   @override
   void initState() {
     super.initState();
+    _initNotifications();
     _initSettings();
+  }
+
+  Future<void> _initNotifications() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/launcher_icon');
+
+    // Simple iOS init - we might need more config for foreground logic if desired
+    const DarwinInitializationSettings initializationSettingsDarwin =
+        DarwinInitializationSettings();
+
+    const InitializationSettings initializationSettings =
+        InitializationSettings(
+          android: initializationSettingsAndroid,
+          iOS: initializationSettingsDarwin,
+          macOS: initializationSettingsDarwin,
+        );
+
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+    // Request permissions (Android 13+)
+    final platform = flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin
+        >();
+    await platform?.requestNotificationsPermission();
+  }
+
+  Future<void> _showNotification(int count) async {
+    const AndroidNotificationDetails androidNotificationDetails =
+        AndroidNotificationDetails(
+          'dm_channel',
+          'Direct Messages',
+          channelDescription: 'Notifications for incoming Instagram DMs',
+          importance: Importance.max,
+          priority: Priority.high,
+          ticker: 'New Message',
+          color: Colors.purple,
+        );
+
+    const NotificationDetails notificationDetails = NotificationDetails(
+      android: androidNotificationDetails,
+    );
+
+    await flutterLocalNotificationsPlugin.show(
+      0,
+      'New Messages',
+      'You have $count unread message${count > 1 ? "s" : ""}',
+      notificationDetails,
+    );
   }
 
   Future<void> _initSettings() async {
@@ -117,6 +170,26 @@ class _DmWebViewState extends State<DmWebView> {
         $mutationLogic
       });
       observer.observe(document.body, { childList: true, subtree: true });
+      
+      // --- NOTIFICATION LOGIC ---
+      // Observe title changes for "(N) Instagram"
+      let lastCount = 0;
+      const titleObserver = new MutationObserver(() => {
+         const title = document.title;
+         const regex = /^\\((\\d+)\\)/; 
+         const match = title.match(regex);
+         if (match) {
+            const count = parseInt(match[1]);
+            if (count > lastCount) {
+               // New message
+               window.flutter_inappwebview.callHandler('onNotify', count);
+            }
+            lastCount = count;
+         } else {
+            lastCount = 0;
+         }
+      });
+      titleObserver.observe(document.querySelector('title'), { childList: true });
     """;
   }
 
@@ -195,22 +268,25 @@ class _DmWebViewState extends State<DmWebView> {
         ]),
         onWebViewCreated: (controller) {
           webViewController = controller;
+
+          // Register Handler
+          controller.addJavaScriptHandler(
+            handlerName: 'onNotify',
+            callback: (args) {
+              if (args.isNotEmpty) {
+                final int count = args[0] as int;
+                // Trigger notification
+                _showNotification(count);
+              }
+            },
+          );
         },
         onReceivedError: (controller, request, error) {
-          // Only block main frame errors or critical failures
-          // Ignore errors like "ERR_BLOCKED_BY_CLIENT" from ad-blockers etc if we had them
           if (request.isForMainFrame ?? false) {
-            // isForMainFrame might be nullable
             setState(() {
               _isError = true;
               _errorDescription = error.description;
             });
-          }
-        },
-        onReceivedHttpError: (controller, request, error) {
-          if (request.isForMainFrame ?? false) {
-            // Handle HTTP errors if needed, but often websites handle 404s themselves.
-            // Only show error screen for connection issues mostly.
           }
         },
         shouldOverrideUrlLoading: (controller, navigationAction) async {
