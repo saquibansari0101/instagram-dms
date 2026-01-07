@@ -2,6 +2,8 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'settings_page.dart';
 
 class DmWebView extends StatefulWidget {
   const DmWebView({super.key});
@@ -12,104 +14,282 @@ class DmWebView extends StatefulWidget {
 
 class _DmWebViewState extends State<DmWebView> {
   InAppWebViewController? webViewController;
+  late final InAppWebViewSettings settings;
 
-  final InAppWebViewSettings settings = InAppWebViewSettings(
-    isInspectable: kDebugMode,
-    mediaPlaybackRequiresUserGesture: false,
-    allowsInlineMediaPlayback: true,
-    iframeAllow: "camera; microphone",
-    iframeAllowFullscreen: true,
-  );
+  // Settings State
+  bool _hideHome = true;
+  bool _hideExplore = true;
+  bool _hideReels = true;
+
+  // Loading & Error state
+  bool _isLoading = true;
+  bool _isError = false;
+  String _errorDescription = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _initSettings();
+  }
+
+  Future<void> _initSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _hideHome = prefs.getBool('hide_home') ?? true;
+      _hideExplore = prefs.getBool('hide_explore') ?? true;
+      _hideReels = prefs.getBool('hide_reels') ?? true;
+      _isLoading = false;
+    });
+
+    settings = InAppWebViewSettings(
+      isInspectable: kDebugMode,
+      mediaPlaybackRequiresUserGesture: false,
+      allowsInlineMediaPlayback: true,
+      iframeAllow: "camera; microphone",
+      iframeAllowFullscreen: true,
+      cacheEnabled: true,
+      domStorageEnabled: true,
+      databaseEnabled: true,
+      preferredContentMode: UserPreferredContentMode.MOBILE,
+    );
+  }
+
+  String _generateUserScript() {
+    String css = """
+      /* Base generic hiding */
+      /* Hide Header Back Button */
+      div[role="button"] svg[aria-label="Back"] { display: none !important; }
+      a[href="/"] svg[aria-label="Back"] { display: none !important; }
+      /* Hide Banner */
+      div[role="banner"] { display: none !important; }
+      /* Ensure full height */
+      html, body { height: 100%; overscroll-behavior: none; }
+    """;
+
+    String mutationLogic = "";
+
+    if (_hideHome) {
+      css += """
+        a[href="/"] { display: none !important; }
+        svg[aria-label="Home"] { display: none !important; }
+      """;
+      mutationLogic += """
+        document.querySelectorAll('a[href="/"]').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('svg[aria-label="Home"]').forEach(el => {
+            let ptr = el.closest('a');
+            if(ptr) ptr.style.display = 'none';
+            else el.style.display = 'none';
+        });
+      """;
+    }
+
+    if (_hideExplore) {
+      css += """
+        a[href="/explore/"] { display: none !important; }
+        svg[aria-label="Search"] { display: none !important; }
+        svg[aria-label="Explore"] { display: none !important; }
+      """;
+      mutationLogic += """
+        document.querySelectorAll('a[href*="/explore/"]').forEach(el => el.style.display = 'none');
+      """;
+    }
+
+    if (_hideReels) {
+      css += """
+        a[href="/reels/"] { display: none !important; }
+        svg[aria-label="Reels"] { display: none !important; }
+      """;
+      mutationLogic += """
+        document.querySelectorAll('a[href*="/reels/"]').forEach(el => el.style.display = 'none');
+      """;
+    }
+
+    mutationLogic += """
+      document.querySelectorAll('svg[aria-label="Back"]').forEach(el => el.style.display = 'none');
+    """;
+
+    return """
+      var style = document.createElement('style');
+      style.innerHTML = `$css`;
+      document.head.appendChild(style);
+
+      const observer = new MutationObserver((mutations) => {
+        $mutationLogic
+      });
+      observer.observe(document.body, { childList: true, subtree: true });
+    """;
+  }
 
   @override
   Widget build(BuildContext context) {
-    // PopScope (replacement for WillPopScope) to handle Android back gesture
+    if (_isLoading) {
+      return const Scaffold(
+        backgroundColor: Colors.black,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // Build the main WebView content
+    Widget content;
+
+    if (_isError) {
+      content = Container(
+        color: Colors.black,
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.wifi_off, size: 64, color: Colors.grey),
+                const SizedBox(height: 16),
+                const Text(
+                  "Something went wrong",
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _errorDescription.isNotEmpty
+                      ? _errorDescription
+                      : "Please check your internet connection.",
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.grey),
+                ),
+                const SizedBox(height: 24),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    setState(() {
+                      _isError = false;
+                      _errorDescription = "";
+                    });
+                    webViewController?.reload();
+                  },
+                  icon: const Icon(Icons.refresh),
+                  label: const Text("Retry"),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    } else {
+      content = InAppWebView(
+        key: ValueKey("$_hideHome$_hideExplore$_hideReels"),
+        initialUrlRequest: URLRequest(
+          url: WebUri("https://www.instagram.com/direct/inbox/"),
+        ),
+        initialSettings: settings,
+        initialUserScripts: UnmodifiableListView<UserScript>([
+          UserScript(
+            source: _generateUserScript(),
+            injectionTime: UserScriptInjectionTime.AT_DOCUMENT_END,
+          ),
+        ]),
+        onWebViewCreated: (controller) {
+          webViewController = controller;
+        },
+        onReceivedError: (controller, request, error) {
+          // Only block main frame errors or critical failures
+          // Ignore errors like "ERR_BLOCKED_BY_CLIENT" from ad-blockers etc if we had them
+          if (request.isForMainFrame ?? false) {
+            // isForMainFrame might be nullable
+            setState(() {
+              _isError = true;
+              _errorDescription = error.description;
+            });
+          }
+        },
+        onReceivedHttpError: (controller, request, error) {
+          if (request.isForMainFrame ?? false) {
+            // Handle HTTP errors if needed, but often websites handle 404s themselves.
+            // Only show error screen for connection issues mostly.
+          }
+        },
+        shouldOverrideUrlLoading: (controller, navigationAction) async {
+          var uri = navigationAction.request.url!;
+
+          // Allow auth
+          if (uri.path.contains("accounts/login") ||
+              uri.host.contains("facebook.com")) {
+            return NavigationActionPolicy.ALLOW;
+          }
+
+          // Conditional Blocking
+          if (_hideHome && uri.path == "/") {
+            controller.loadUrl(
+              urlRequest: URLRequest(
+                url: WebUri("https://www.instagram.com/direct/inbox/"),
+              ),
+            );
+            return NavigationActionPolicy.CANCEL;
+          }
+
+          if (_hideExplore && uri.path.startsWith("/explore")) {
+            controller.loadUrl(
+              urlRequest: URLRequest(
+                url: WebUri("https://www.instagram.com/direct/inbox/"),
+              ),
+            );
+            return NavigationActionPolicy.CANCEL;
+          }
+
+          if (_hideReels && uri.path.startsWith("/reels")) {
+            controller.loadUrl(
+              urlRequest: URLRequest(
+                url: WebUri("https://www.instagram.com/direct/inbox/"),
+              ),
+            );
+            return NavigationActionPolicy.CANCEL;
+          }
+
+          return NavigationActionPolicy.ALLOW;
+        },
+      );
+    }
+
     return PopScope(
-      canPop: false, // Prevent the default pop navigation
+      canPop: false,
       onPopInvoked: (didPop) async {
         if (didPop) return;
-
         final controller = webViewController;
         if (controller != null) {
           if (await controller.canGoBack()) {
             controller.goBack();
-          } else {
-            // We are at the root, do we want to exit?
-            // Maybe show a snackbar or just ignore to keep user in app?
-            // Since "DM wrapper", likely user wants to stay in.
-            // If we want to allow exit on double tap, we can implement that.
-            // For now, let's allow pop only if not at root web history?
-            // Actually, the user complaint is "back gesture is making app exit" when they probably didn't mean to.
-            // So blocking pop is good.
           }
         }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        body: SafeArea(
-          child: InAppWebView(
-            initialUrlRequest: URLRequest(
-              url: WebUri("https://www.instagram.com/direct/inbox/"),
-            ),
-            initialSettings: settings,
-            initialUserScripts: UnmodifiableListView<UserScript>([
-              UserScript(
-                source: """
-                    var style = document.createElement('style');
-                    style.innerHTML = `
-                      /* Hide Navigation Items */
-                      a[href="/"] { display: none !important; } /* Home */
-                      a[href="/explore/"] { display: none !important; } /* Explore */
-                      a[href="/reels/"] { display: none !important; } /* Reels */
-                      
-                      /* Hide by Aria Label just in case */
-                      svg[aria-label="Home"] { display: none !important; }
-                      svg[aria-label="Search"] { display: none !important; }
-                      svg[aria-label="Explore"] { display: none !important; }
-                      svg[aria-label="Reels"] { display: none !important; }
-                      
-                      /* Hide Header Back Button (usually appearing in mobile web view when deep linked) */
-                      /* This button often takes you back to Feed if you are in Inbox */
-                      div[role="button"] svg[aria-label="Back"] { display: none !important; }
-                      a[href="/"] svg[aria-label="Back"] { display: none !important; }
-                      
-                      /* Hide "Get App" banner if it appears */
-                      div[role="banner"] { display: none !important; }
-                    `;
-                    document.head.appendChild(style);
-                  """,
-                injectionTime: UserScriptInjectionTime.AT_DOCUMENT_END,
+        floatingActionButton: _isError
+            ? null
+            : FloatingActionButton(
+                mini: true,
+                backgroundColor: Colors.grey[900]?.withOpacity(0.5),
+                child: const Icon(
+                  Icons.settings,
+                  color: Colors.white,
+                  size: 20,
+                ),
+                onPressed: () async {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const SettingsPage(),
+                    ),
+                  );
+                  await _initSettings();
+                  webViewController?.reload();
+                },
               ),
-            ]),
-            onWebViewCreated: (controller) {
-              webViewController = controller;
-            },
-            shouldOverrideUrlLoading: (controller, navigationAction) async {
-              var uri = navigationAction.request.url!;
-
-              // Allow login pages
-              if (uri.path.contains("accounts/login") ||
-                  uri.host.contains("facebook.com")) {
-                return NavigationActionPolicy.ALLOW;
-              }
-
-              // Block explicit navigations to distractions
-              if (uri.path == "/" ||
-                  uri.path.startsWith("/explore") ||
-                  uri.path.startsWith("/reels")) {
-                // Redirect back to inbox if they try to go there
-                controller.loadUrl(
-                  urlRequest: URLRequest(
-                    url: WebUri("https://www.instagram.com/direct/inbox/"),
-                  ),
-                );
-                return NavigationActionPolicy.CANCEL;
-              }
-
-              return NavigationActionPolicy.ALLOW;
-            },
-          ),
-        ),
+        body: SafeArea(child: content),
       ),
     );
   }
