@@ -29,6 +29,9 @@ class _DmWebViewState extends State<DmWebView> {
   bool _isError = false;
   String _errorDescription = "";
 
+  // FAB Position
+  Offset? _fabPosition;
+
   @override
   void initState() {
     super.initState();
@@ -344,28 +347,61 @@ class _DmWebViewState extends State<DmWebView> {
       },
       child: Scaffold(
         backgroundColor: Colors.black,
-        floatingActionButton: _isError
-            ? null
-            : FloatingActionButton(
-                mini: true,
-                backgroundColor: Colors.grey[900]?.withOpacity(0.5),
-                child: const Icon(
-                  Icons.settings,
-                  color: Colors.white,
-                  size: 20,
-                ),
-                onPressed: () async {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SettingsPage(),
+        floatingActionButton: null,
+        body: Stack(
+          children: [
+            SafeArea(child: content),
+            if (!_isError)
+              Positioned(
+                left:
+                    _fabPosition?.dx ??
+                    (MediaQuery.of(context).size.width - 72),
+                top:
+                    _fabPosition?.dy ??
+                    (MediaQuery.of(context).size.height - 100),
+                child: GestureDetector(
+                  onPanUpdate: (details) {
+                    setState(() {
+                      final size = MediaQuery.of(context).size;
+                      final currentPos =
+                          _fabPosition ??
+                          Offset(size.width - 72, size.height - 100);
+
+                      double newX = currentPos.dx + details.delta.dx;
+                      double newY = currentPos.dy + details.delta.dy;
+
+                      // Clamp values to keep FAB on screen
+                      // FAB default size is 56x56
+                      // Using Mini=true (40x40)
+                      newX = newX.clamp(0.0, size.width - 40);
+                      newY = newY.clamp(0.0, size.height - 40);
+
+                      _fabPosition = Offset(newX, newY);
+                    });
+                  },
+                  child: FloatingActionButton(
+                    mini: true,
+                    backgroundColor: Colors.grey[900]?.withOpacity(0.5),
+                    child: const Icon(
+                      Icons.settings,
+                      color: Colors.white,
+                      size: 20,
                     ),
-                  );
-                  await _initSettings();
-                  webViewController?.reload();
-                },
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const SettingsPage(),
+                        ),
+                      );
+                      await _initSettings();
+                      webViewController?.reload();
+                    },
+                  ),
+                ),
               ),
-        body: SafeArea(child: content),
+          ],
+        ),
       ),
     );
   }
