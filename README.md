@@ -20,6 +20,14 @@ This application serves as a dedicated "DM-only" client for Instagram. It wraps 
     -   Handles Android back gesture correctly (navigates web history instead of closing app).
     -   Maintains a dark-themed aesthetic.
 
+## Screenshots
+
+| Home | DMs |
+|:---:|:---:|
+| <img src="screenshots/home.jpg" width="300" /> | <img src="screenshots/dms.jpg" width="300" /> |
+| **Settings** | **Offline** |
+| <img src="screenshots/settings.jpg" width="300" /> | <img src="screenshots/no_internet.jpg" width="300" /> |
+
 ## Tech Stack
 
 -   **Framework**: Flutter
